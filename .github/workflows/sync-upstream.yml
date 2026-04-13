@@ -1,4 +1,4 @@
-name: Sync Upstream
+name: Sync Upstream & Deploy
 
 on:
   schedule:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch: # 支持手动触发
 
 jobs:
-  sync:
+  sync-and-deploy:
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -16,10 +16,27 @@ jobs:
           fetch-depth: 0
 
       - name: Sync from upstream
+        id: sync
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git remote add upstream https://github.com/cmliu/edgetunnel.git
           git fetch upstream
+          BEFORE=$(git rev-parse HEAD)
           git merge upstream/main --no-edit
-          git push
+          AFTER=$(git rev-parse HEAD)
+          if [ "$BEFORE" != "$AFTER" ]; then
+            echo "updated=true" >> $GITHUB_OUTPUT
+            git push
+          else
+            echo "updated=false" >> $GITHUB_OUTPUT
+            echo "Already up to date, skipping deploy."
+          fi
+
+      - name: Deploy to Cloudflare Pages
+        if: steps.sync.outputs.updated == 'true' || github.event_name == 'workflow_dispatch'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy . --project-name edgetunnel --branch main
